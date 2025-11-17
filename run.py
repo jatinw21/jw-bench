@@ -3,8 +3,8 @@ from pathlib import Path
 from client_openrouter import OpenRouterClient
 
 MODELS = [
-    "openrouter/anthropic/claude-3.5-sonnet",
-    "openrouter/openai/gpt-4o-mini",
+    "anthropic/claude-3.5-sonnet",
+    "openai/gpt-4o-mini",
 ]
 
 def format_messages(q):

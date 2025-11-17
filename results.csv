@@ -1,0 +1,11 @@
+id,model,gold,pred,correct,latency_s,total_tokens
+q1,anthropic/claude-3.5-sonnet,B,B,1,2.401,66
+q2,anthropic/claude-3.5-sonnet,C,C,1,2.066,66
+q3,anthropic/claude-3.5-sonnet,B,B,1,1.673,70
+q4,anthropic/claude-3.5-sonnet,B,B,1,1.586,69
+q5,anthropic/claude-3.5-sonnet,B,B,1,1.51,73
+q1,openai/gpt-4o-mini,B,B,1,1.168,61
+q2,openai/gpt-4o-mini,C,C,1,0.586,58
+q3,openai/gpt-4o-mini,B,B,1,0.779,63
+q4,openai/gpt-4o-mini,B,B,1,0.669,63
+q5,openai/gpt-4o-mini,B,B,1,0.717,63

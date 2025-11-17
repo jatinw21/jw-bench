@@ -1,15 +1,11 @@
 import os, time, requests
 from dotenv import load_dotenv
 
-# Load .env from the project root (or current working dir)
-# load_dotenv() walks up directories, so this is enough for typical use.
 load_dotenv()
-
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 class OpenRouterClient:
     def __init__(self, model: str, api_key: str | None = None, timeout: float = 60):
-        # Prefer explicit arg, then env var loaded from .env
         self.model = model
         self.key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.key:
@@ -23,6 +19,9 @@ class OpenRouterClient:
         headers = {
             "Authorization": f"Bearer {self.key}",
             "Content-Type": "application/json",
+            # These two are optional but recommended by OpenRouter:
+            "HTTP-Referer": "https://localhost",  # or your repo URL
+            "X-Title": "jw-bench",
         }
         payload = {
             "model": self.model,
@@ -32,7 +31,16 @@ class OpenRouterClient:
         }
         t0 = time.time()
         r = requests.post(OPENROUTER_URL, json=payload, headers=headers, timeout=self.timeout)
-        r.raise_for_status()
+        # --- Better error surfacing ---
+        if r.status_code >= 400:
+            try:
+                detail = r.json()
+            except Exception:
+                detail = {"text": r.text[:500]}
+            raise requests.HTTPError(
+                f"{r.status_code} error from OpenRouter for model='{self.model}': {detail}",
+                response=r,
+            )
         j = r.json()
         latency_s = time.time() - t0
         text = j["choices"][0]["message"]["content"]
