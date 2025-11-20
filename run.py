@@ -7,7 +7,7 @@ MODELS = [
 ]
 
 def main():
-    tasks = load_tasks()
+    tasks = load_tasks(sample=True)
 
     for model in MODELS:
         client = OpenRouterClient(model)
