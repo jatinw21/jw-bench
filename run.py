@@ -17,7 +17,7 @@ def save_response(model_name, task_id, text, base_dir="outputs"):
         f.write(text)
 
 
-def main(sample=True, skip_existing=True):
+def main(sample=False, skip_existing=True):
     tasks = load_tasks(sample=sample)
 
     for model in MODELS:
