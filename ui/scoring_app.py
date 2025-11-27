@@ -101,31 +101,6 @@ def inject_css():
     st.markdown("""
 <style>
 
-    /* Global background */
-    body {
-        background-color: #F7F9FC;
-    }
-
-    /* Task card */
-    .task-card {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0px 4px 12px rgba(0,0,0,0.06);
-        margin-bottom: 20px;
-        border: 1px solid #EDF1F7;
-    }
-
-    /* Model card */
-    .model-card {
-        background: white;
-        padding: 20px;
-        border-radius: 16px;
-        box-shadow: 0px 4px 18px rgba(0,0,0,0.06);
-        border: 1px solid #E1E8F5;
-        margin-bottom: 25px;
-    }
-
     .hidden-chip {
         background: #DDE3ED;
         padding: 4px 10px;
@@ -195,10 +170,8 @@ def main():
     task = next(t for t in tasks if t["id"] == selected_task_id)
     saved_scores = load_scores_for_task(selected_task_id)
 
-    st.markdown(f"<div class='task-card'>", unsafe_allow_html=True)
     st.markdown(f"### {task['id']}  \n**Category:** {task['category']}")
     st.markdown(f"**Prompt:**  \n{task['prompt']}")
-    st.markdown("</div>", unsafe_allow_html=True)
 
     # Load model outputs
     responses = load_responses(selected_task_id)
@@ -221,8 +194,6 @@ def main():
 
     for idx, model in enumerate(model_names):
         with cols[idx]:
-            st.markdown("<div class='model-card'>", unsafe_allow_html=True)
-
             # Hidden name or revealed name
             if not st.session_state[reveal_key]:
                 st.markdown(f"<span class='hidden-chip'>Model {chr(65+idx)}</span>", unsafe_allow_html=True)
