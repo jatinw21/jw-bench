@@ -144,7 +144,7 @@ def inject_css():
         border-radius: 12px;
         padding: 16px 18px;
     }
-    .model-card { height: 100%; display: flex; flex-direction: column; gap: 12px; }
+    .model-card { height: 100%; min-height: 480px; display: flex; flex-direction: column; gap: 12px; }
 
     .card-label {
         font-size: 12px;
@@ -217,21 +217,41 @@ def main():
     param_task = params.get("task")
     if isinstance(param_task, list):
         param_task = param_task[0] if param_task else None
-    if param_task not in task_ids:
-        param_task = task_ids[0]
+    # Extract category from query params
+    categories = sorted({t["category"] for t in tasks})
+    category_options = ["All"] + categories
+    param_category = params.get("category")
+    if isinstance(param_category, list):
+        param_category = param_category[0] if param_category else None
+    if param_category not in category_options:
+        param_category = "All"
 
     #-----------------------------------------
     # SIDEBAR
     #-----------------------------------------
     st.sidebar.title("Controls")
+    selected_category = st.sidebar.selectbox(
+        "Select Category",
+        category_options,
+        index=category_options.index(param_category),
+    )
+    if selected_category != param_category:
+        st.query_params["category"] = selected_category
+
+    filtered_tasks = [t for t in tasks if selected_category == "All" or t["category"] == selected_category]
+    filtered_task_ids = [t["id"] for t in filtered_tasks]
+    if param_task not in filtered_task_ids:
+        param_task = filtered_task_ids[0]
+
     selected_task_id = st.sidebar.selectbox(
         "Select Task",
-        task_ids,
-        index=task_ids.index(param_task),
+        filtered_task_ids,
+        index=filtered_task_ids.index(param_task),
     )
     # Keep query params in sync with selection
     if selected_task_id != param_task:
         st.query_params["task"] = selected_task_id
+        st.query_params["category"] = selected_category
 
     st.sidebar.caption("Use the header arrows to move between tasks.")
     st.sidebar.markdown("---")
@@ -250,8 +270,8 @@ def main():
     scored_models = len(saved_scores)
     completed_tasks, total_tasks = task_completion_counts(task_ids, expected_models or 1)
 
-    # Navigation indices
-    curr_index = task_ids.index(selected_task_id)
+    # Navigation indices within filtered set
+    curr_index = filtered_task_ids.index(selected_task_id)
 
     # Top bar with chips, progress, navigation
     st.markdown("<div class='page-shell'>", unsafe_allow_html=True)
@@ -271,10 +291,15 @@ def main():
             )
         with top_right:
             nav_prev, nav_next = st.columns(2)
-            if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
-                st.query_params["task"] = task_ids[curr_index - 1]
-            if nav_next.button("Next →", use_container_width=True, disabled=curr_index == len(task_ids) - 1):
-                st.query_params["task"] = task_ids[curr_index + 1]
+            if filtered_task_ids:
+                if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
+                    new_idx = max(0, curr_index - 1)
+                    st.query_params["task"] = filtered_task_ids[new_idx]
+                    st.query_params["category"] = selected_category
+                if nav_next.button("Next →", use_container_width=True, disabled=curr_index >= len(filtered_task_ids) - 1):
+                    new_idx = min(len(filtered_task_ids) - 1, curr_index + 1)
+                    st.query_params["task"] = filtered_task_ids[new_idx]
+                    st.query_params["category"] = selected_category
 
     # Prompt card
     st.markdown(
