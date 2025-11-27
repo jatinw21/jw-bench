@@ -146,20 +146,34 @@ def main():
 
     tasks = load_tasks()
     task_ids = [t["id"] for t in tasks]
+    params = st.query_params
+    # Extract task from query params (supports str or list)
+    param_task = params.get("task")
+    if isinstance(param_task, list):
+        param_task = param_task[0] if param_task else None
+    if param_task not in task_ids:
+        param_task = task_ids[0]
 
     #-----------------------------------------
     # SIDEBAR
     #-----------------------------------------
     st.sidebar.title("Controls")
-    selected_task_id = st.sidebar.selectbox("Select Task", task_ids)
+    selected_task_id = st.sidebar.selectbox(
+        "Select Task",
+        task_ids,
+        index=task_ids.index(param_task),
+    )
+    # Keep query params in sync with selection
+    if selected_task_id != param_task:
+        st.query_params["task"] = selected_task_id
 
     curr_index = task_ids.index(selected_task_id)
     col_prev, col_next = st.sidebar.columns(2)
     if col_prev.button("< Previous") and curr_index > 0:
-        st.experimental_set_query_params(task=task_ids[curr_index - 1])
+        st.query_params["task"] = task_ids[curr_index - 1]
 
     if col_next.button("Next >") and curr_index < len(task_ids) - 1:
-        st.experimental_set_query_params(task=task_ids[curr_index + 1])
+        st.query_params["task"] = task_ids[curr_index + 1]
 
     st.sidebar.markdown("---")
     st.sidebar.write("Autosave: Enabled")
