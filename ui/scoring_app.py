@@ -4,6 +4,7 @@ import os
 import random
 import time
 from pathlib import Path
+import sqlite3
 
 # --------------------------------------------
 # CONFIG
@@ -11,7 +12,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "outputs"
 TASK_FILE = BASE_DIR / "data/full_set.jsonl"
-SCORES_FILE = BASE_DIR / "scores/scores.jsonl"
+DB_PATH = BASE_DIR / "scores" / "scores.db"
 
 # --------------------------------------------
 # LOAD TASKS
@@ -47,12 +48,51 @@ def load_responses(task_id):
 
 
 # --------------------------------------------
-# SAVE SCORES
+# SQLITE HELPERS
 # --------------------------------------------
-def save_score(record):
-    os.makedirs("scores", exist_ok=True)
-    with open(SCORES_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+def init_db():
+    os.makedirs(DB_PATH.parent, exist_ok=True)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scores (
+                task_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                quality INTEGER NOT NULL,
+                tone INTEGER NOT NULL,
+                timestamp REAL NOT NULL,
+                PRIMARY KEY (task_id, model)
+            )
+            """
+        )
+
+def load_scores_for_task(task_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT model, quality, tone FROM scores WHERE task_id = ?",
+            (task_id,),
+        ).fetchall()
+    return {model: {"quality": quality, "tone": tone} for model, quality, tone in rows}
+
+def save_scores_for_task(task_id, scores):
+    now = time.time()
+    records = [
+        (task_id, model, vals["quality"], vals["tone"], now)
+        for model, vals in scores.items()
+    ]
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany(
+            """
+            INSERT INTO scores (task_id, model, quality, tone, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, model)
+            DO UPDATE SET
+                quality = excluded.quality,
+                tone = excluded.tone,
+                timestamp = excluded.timestamp
+            """,
+            records,
+        )
 
 # --------------------------------------------
 # CUSTOM MODERN CSS
@@ -126,6 +166,7 @@ def model_color(idx):
 # --------------------------------------------
 def main():
     st.set_page_config(page_title="LLM Model Scoring UI", layout="wide")
+    init_db()
     inject_css()
 
     tasks = load_tasks()
@@ -152,6 +193,7 @@ def main():
     # MAIN AREA
     #-----------------------------------------
     task = next(t for t in tasks if t["id"] == selected_task_id)
+    saved_scores = load_scores_for_task(selected_task_id)
 
     st.markdown(f"<div class='task-card'>", unsafe_allow_html=True)
     st.markdown(f"### {task['id']}  \n**Category:** {task['category']}")
@@ -196,26 +238,49 @@ def main():
                 st.write(responses[model])
 
             # Sliders
-            quality = st.slider(f"Quality (Model {chr(65+idx)})", 1, 5, 3, key=f"{selected_task_id}_q_{model}")
-            tone = st.slider(f"Tone Fit (Model {chr(65+idx)})", 1, 5, 3, key=f"{selected_task_id}_t_{model}")
+            q_key = f"{selected_task_id}_q_{model}"
+            t_key = f"{selected_task_id}_t_{model}"
 
-            # Autosave after scoring
-            if quality and tone:
-                record = {
-                    "task_id": selected_task_id,
-                    "model": model,
-                    "quality": quality,
-                    "tone": tone,
-                    "timestamp": time.time()
-                }
-                save_score(record)
+            if q_key not in st.session_state and model in saved_scores:
+                st.session_state[q_key] = saved_scores[model]["quality"]
+            if t_key not in st.session_state and model in saved_scores:
+                st.session_state[t_key] = saved_scores[model]["tone"]
+
+            quality = st.slider(
+                f"Quality (Model {chr(65+idx)})",
+                1,
+                5,
+                st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
+                key=q_key,
+            )
+            tone = st.slider(
+                f"Tone Fit (Model {chr(65+idx)})",
+                1,
+                5,
+                st.session_state.get(t_key, saved_scores.get(model, {}).get("tone", 3)),
+                key=t_key,
+            )
 
             st.markdown("</div>", unsafe_allow_html=True)
 
+    # SAVE BUTTON
+    if model_names:
+        if st.button("Save scores for this task"):
+            score_payload = {}
+            for model in model_names:
+                q_key = f"{selected_task_id}_q_{model}"
+                t_key = f"{selected_task_id}_t_{model}"
+                score_payload[model] = {
+                    "quality": int(st.session_state.get(q_key, 3)),
+                    "tone": int(st.session_state.get(t_key, 3)),
+                }
+            save_scores_for_task(selected_task_id, score_payload)
+            st.success(f"Saved scores for {selected_task_id}")
+            saved_scores = load_scores_for_task(selected_task_id)
+
     # REVEAL BUTTON
     all_scored = all(
-        st.session_state.get(f"{selected_task_id}_q_{m}") and
-        st.session_state.get(f"{selected_task_id}_t_{m}")
+        m in saved_scores
         for m in model_names
     )
 
