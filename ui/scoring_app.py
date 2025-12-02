@@ -106,6 +106,20 @@ def task_completion_counts(task_ids, expected_models):
     completed = sum(1 for t in task_ids if counts.get(t, 0) >= expected_models)
     return completed, len(task_ids)
 
+
+def clamp_task(active_task, filtered_task_ids, direction):
+    """
+    Given current task and direction (-1 for prev, 1 for next), return clamped target task and index.
+    """
+    if not filtered_task_ids:
+        return None, None
+    try:
+        idx = filtered_task_ids.index(active_task)
+    except ValueError:
+        idx = 0
+    new_idx = min(max(idx + direction, 0), len(filtered_task_ids) - 1)
+    return filtered_task_ids[new_idx], new_idx
+
 # --------------------------------------------
 # CUSTOM MODERN CSS
 # --------------------------------------------
@@ -226,6 +240,12 @@ def main():
     if param_category not in category_options:
         param_category = "All"
 
+    # Session state as source of truth
+    if "selected_category" not in st.session_state:
+        st.session_state.selected_category = param_category
+    if "active_task" not in st.session_state:
+        st.session_state.active_task = param_task or task_ids[0]
+
     #-----------------------------------------
     # SIDEBAR
     #-----------------------------------------
@@ -233,29 +253,48 @@ def main():
     selected_category = st.sidebar.selectbox(
         "Select Category",
         category_options,
-        index=category_options.index(param_category),
+        index=category_options.index(st.session_state.selected_category),
     )
-    if selected_category != param_category:
+    if selected_category != st.session_state.selected_category:
+        st.session_state.selected_category = selected_category
         st.query_params["category"] = selected_category
+        st.session_state.active_task = None
+        st.experimental_rerun()
 
     filtered_tasks = [t for t in tasks if selected_category == "All" or t["category"] == selected_category]
     filtered_task_ids = [t["id"] for t in filtered_tasks]
-    if param_task not in filtered_task_ids:
-        param_task = filtered_task_ids[0]
+    if not filtered_task_ids:
+        st.error("No tasks for this category.")
+        return
+    if st.session_state.active_task not in filtered_task_ids:
+        st.session_state.active_task = filtered_task_ids[0]
+        st.query_params["task"] = st.session_state.active_task
+        st.query_params["category"] = selected_category
 
     selected_task_id = st.sidebar.selectbox(
         "Select Task",
         filtered_task_ids,
-        index=filtered_task_ids.index(param_task),
+        index=filtered_task_ids.index(st.session_state.active_task),
     )
     # Keep query params in sync with selection
-    if selected_task_id != param_task:
+    if selected_task_id != st.session_state.active_task:
+        st.session_state.active_task = selected_task_id
         st.query_params["task"] = selected_task_id
         st.query_params["category"] = selected_category
+        st.experimental_rerun()
 
     st.sidebar.caption("Use the header arrows to move between tasks.")
     st.sidebar.markdown("---")
     st.sidebar.caption("Scores are saved to scores/scores.db")
+    with st.sidebar.expander("Debug state"):
+        st.json({
+            "param_task": param_task,
+            "selected_category": selected_category,
+            "selected_task_id": selected_task_id,
+            "state_active_task": st.session_state.active_task,
+            "filtered_task_ids": filtered_task_ids,
+            "curr_index": filtered_task_ids.index(selected_task_id) if selected_task_id in filtered_task_ids else None,
+        })
 
     #-----------------------------------------
     # MAIN AREA
@@ -293,13 +332,19 @@ def main():
             nav_prev, nav_next = st.columns(2)
             if filtered_task_ids:
                 if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
-                    new_idx = max(0, curr_index - 1)
-                    st.query_params["task"] = filtered_task_ids[new_idx]
+                    target_task, new_idx = clamp_task(st.session_state.active_task, filtered_task_ids, -1)
+                    st.session_state.active_task = target_task
+                    st.query_params["task"] = target_task
                     st.query_params["category"] = selected_category
+                    print(f"[nav] prev clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
+                    st.experimental_rerun()
                 if nav_next.button("Next →", use_container_width=True, disabled=curr_index >= len(filtered_task_ids) - 1):
-                    new_idx = min(len(filtered_task_ids) - 1, curr_index + 1)
-                    st.query_params["task"] = filtered_task_ids[new_idx]
+                    target_task, new_idx = clamp_task(st.session_state.active_task, filtered_task_ids, 1)
+                    st.session_state.active_task = target_task
+                    st.query_params["task"] = target_task
                     st.query_params["category"] = selected_category
+                    print(f"[nav] next clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
+                    st.experimental_rerun()
 
     # Prompt card
     st.markdown(
