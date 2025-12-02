@@ -60,36 +60,53 @@ def init_db():
                 task_id TEXT NOT NULL,
                 model TEXT NOT NULL,
                 quality INTEGER NOT NULL,
-                tone INTEGER NOT NULL,
                 timestamp REAL NOT NULL,
                 PRIMARY KEY (task_id, model)
             )
             """
         )
+        # Migrate old schema with tone column to new schema without tone
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(scores)").fetchall()]
+        if "tone" in cols:
+            conn.execute("ALTER TABLE scores RENAME TO scores_old")
+            conn.execute(
+                """
+                CREATE TABLE scores (
+                    task_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    quality INTEGER NOT NULL,
+                    timestamp REAL NOT NULL,
+                    PRIMARY KEY (task_id, model)
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO scores (task_id, model, quality, timestamp) SELECT task_id, model, quality, timestamp FROM scores_old"
+            )
+            conn.execute("DROP TABLE scores_old")
 
 def load_scores_for_task(task_id):
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT model, quality, tone FROM scores WHERE task_id = ?",
+            "SELECT model, quality FROM scores WHERE task_id = ?",
             (task_id,),
         ).fetchall()
-    return {model: {"quality": quality, "tone": tone} for model, quality, tone in rows}
+    return {model: {"quality": quality} for model, quality in rows}
 
 def save_scores_for_task(task_id, scores):
     now = time.time()
     records = [
-        (task_id, model, vals["quality"], vals["tone"], now)
+        (task_id, model, vals["quality"], now)
         for model, vals in scores.items()
     ]
     with sqlite3.connect(DB_PATH) as conn:
         conn.executemany(
             """
-            INSERT INTO scores (task_id, model, quality, tone, timestamp)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO scores (task_id, model, quality, timestamp)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(task_id, model)
             DO UPDATE SET
                 quality = excluded.quality,
-                tone = excluded.tone,
                 timestamp = excluded.timestamp
             """,
             records,
@@ -292,12 +309,9 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
                 )
 
                 q_key = f"{task_id}_q_{model}"
-                t_key = f"{task_id}_t_{model}"
 
                 if q_key not in st.session_state and model in saved_scores:
                     st.session_state[q_key] = saved_scores[model]["quality"]
-                if t_key not in st.session_state and model in saved_scores:
-                    st.session_state[t_key] = saved_scores[model]["tone"]
 
                 st.slider(
                     "Quality",
@@ -306,22 +320,13 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
                     st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
                     key=q_key,
                 )
-                st.slider(
-                    "Tone Fit",
-                    1,
-                    5,
-                    st.session_state.get(t_key, saved_scores.get(model, {}).get("tone", 3)),
-                    key=t_key,
-                )
 
     if save_clicked and model_names:
         score_payload = {}
         for model in model_names:
             q_key = f"{task_id}_q_{model}"
-            t_key = f"{task_id}_t_{model}"
             score_payload[model] = {
                 "quality": int(st.session_state.get(q_key, 3)),
-                "tone": int(st.session_state.get(t_key, 3)),
             }
         save_scores_for_task(task_id, score_payload)
         st.success(f"Saved scores for {task_id}")
