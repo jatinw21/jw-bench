@@ -120,6 +120,226 @@ def clamp_task(active_task, filtered_task_ids, direction):
     new_idx = min(max(idx + direction, 0), len(filtered_task_ids) - 1)
     return filtered_task_ids[new_idx], new_idx
 
+
+def parse_query_params(task_ids, category_options):
+    params = st.query_params
+    param_task = params.get("task")
+    if isinstance(param_task, list):
+        param_task = param_task[0] if param_task else None
+    param_category = params.get("category")
+    if isinstance(param_category, list):
+        param_category = param_category[0] if param_category else None
+    if param_category not in category_options:
+        param_category = "All"
+    if param_task not in task_ids:
+        param_task = task_ids[0]
+    return param_task, param_category
+
+
+def ensure_session_defaults(param_task, param_category, task_ids):
+    if "selected_category" not in st.session_state:
+        st.session_state.selected_category = param_category
+    if "active_task" not in st.session_state:
+        st.session_state.active_task = param_task or task_ids[0]
+
+
+def render_sidebar(tasks, category_options):
+    st.sidebar.title("Controls")
+    selected_category = st.sidebar.selectbox(
+        "Select Category",
+        category_options,
+        index=category_options.index(st.session_state.selected_category),
+    )
+    if selected_category != st.session_state.selected_category:
+        st.session_state.selected_category = selected_category
+        st.query_params["category"] = selected_category
+        st.session_state.active_task = None
+        st.experimental_rerun()
+
+    filtered_tasks = [t for t in tasks if selected_category == "All" or t["category"] == selected_category]
+    filtered_task_ids = [t["id"] for t in filtered_tasks]
+    if not filtered_task_ids:
+        st.error("No tasks for this category.")
+        return selected_category, None, []
+
+    if st.session_state.active_task not in filtered_task_ids:
+        st.session_state.active_task = filtered_task_ids[0]
+        st.query_params["task"] = st.session_state.active_task
+        st.query_params["category"] = selected_category
+
+    selected_task_id = st.sidebar.selectbox(
+        "Select Task",
+        filtered_task_ids,
+        index=filtered_task_ids.index(st.session_state.active_task),
+    )
+    if selected_task_id != st.session_state.active_task:
+        st.session_state.active_task = selected_task_id
+        st.query_params["task"] = selected_task_id
+        st.query_params["category"] = selected_category
+        st.experimental_rerun()
+
+    st.sidebar.caption("Use the header arrows to move between tasks.")
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Scores are saved to scores/scores.db")
+
+    return selected_category, selected_task_id, filtered_task_ids
+
+
+def render_debug_panel(param_task, selected_category, selected_task_id, filtered_task_ids):
+    with st.sidebar.expander("Debug state"):
+        st.json({
+            "param_task": param_task,
+            "selected_category": selected_category,
+            "selected_task_id": selected_task_id,
+            "state_active_task": st.session_state.get("active_task"),
+            "filtered_task_ids": filtered_task_ids,
+            "curr_index": filtered_task_ids.index(selected_task_id) if selected_task_id in filtered_task_ids else None,
+        })
+
+
+def render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category):
+    curr_index = filtered_task_ids.index(task["id"])
+    st.markdown("<div class='page-shell'>", unsafe_allow_html=True)
+    with st.container():
+        top_left, top_mid, top_right = st.columns([3, 3, 2])
+        with top_left:
+            st.markdown(f"<div class='pill pill-muted'>{task['category']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<h1 class='page-title'>{task['id']}</h1>", unsafe_allow_html=True)
+        with top_mid:
+            st.markdown(
+                f"<div class='pill pill-strong'>{min(scored_models, expected_models)}/{expected_models or '0'} models scored</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"<div class='pill pill-soft'>{completed_tasks}/{total_tasks} tasks fully scored</div>",
+                unsafe_allow_html=True,
+            )
+        with top_right:
+            nav_prev, nav_next = st.columns(2)
+            if filtered_task_ids:
+                if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
+                    target_task, new_idx = clamp_task(task["id"], filtered_task_ids, -1)
+                    st.session_state.active_task = target_task
+                    st.query_params["task"] = target_task
+                    st.query_params["category"] = selected_category
+                    print(f"[nav] prev clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
+                    st.experimental_rerun()
+                if nav_next.button("Next →", use_container_width=True, disabled=curr_index >= len(filtered_task_ids) - 1):
+                    target_task, new_idx = clamp_task(task["id"], filtered_task_ids, 1)
+                    st.session_state.active_task = target_task
+                    st.query_params["task"] = target_task
+                    st.query_params["category"] = selected_category
+                    print(f"[nav] next clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
+                    st.experimental_rerun()
+
+
+def render_prompt(task):
+    st.markdown(
+        f"""
+        <div class='prompt-card'>
+            <div class='card-label'>Prompt</div>
+            <div>{task['prompt']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_model_responses(task_id, model_names, responses, saved_scores):
+    # Randomize order per session per task
+    seed_key = f"shuffle_{task_id}"
+    if seed_key not in st.session_state:
+        st.session_state[seed_key] = random.random()
+    random.Random(st.session_state[seed_key]).shuffle(model_names)
+
+    # Detect if all scored → reveal names
+    reveal_key = f"reveal_{task_id}"
+    if reveal_key not in st.session_state:
+        st.session_state[reveal_key] = False
+
+    st.markdown("### Model Responses", unsafe_allow_html=True)
+    save_clicked = False
+
+    if not model_names:
+        st.info("No model outputs found for this task.")
+        return saved_scores
+
+    if st.button("💾 Save scores", type="primary"):
+        save_clicked = True
+
+    cols_per_row = 2 if len(model_names) > 1 else 1
+    for start in range(0, len(model_names), cols_per_row):
+        row_models = model_names[start:start + cols_per_row]
+        cols = st.columns(len(row_models))
+        for idx_in_row, model in enumerate(row_models):
+            idx = start + idx_in_row
+            with cols[idx_in_row]:
+                chip_html = (
+                    f"<span class='hidden-chip'>Model {chr(65+idx)}</span>"
+                    if not st.session_state[reveal_key]
+                    else f"<span class='reveal-chip' style='background:{model_color(idx)}'>{model}</span>"
+                )
+                st.markdown(chip_html, unsafe_allow_html=True)
+
+                st.markdown(
+                    f"""
+                    <div class='model-card'>
+                        <div class='card-label'>Response</div>
+                        <div class='response-box'>{html.escape(responses[model])}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                q_key = f"{task_id}_q_{model}"
+                t_key = f"{task_id}_t_{model}"
+
+                if q_key not in st.session_state and model in saved_scores:
+                    st.session_state[q_key] = saved_scores[model]["quality"]
+                if t_key not in st.session_state and model in saved_scores:
+                    st.session_state[t_key] = saved_scores[model]["tone"]
+
+                st.slider(
+                    "Quality",
+                    1,
+                    5,
+                    st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
+                    key=q_key,
+                )
+                st.slider(
+                    "Tone Fit",
+                    1,
+                    5,
+                    st.session_state.get(t_key, saved_scores.get(model, {}).get("tone", 3)),
+                    key=t_key,
+                )
+
+    if save_clicked and model_names:
+        score_payload = {}
+        for model in model_names:
+            q_key = f"{task_id}_q_{model}"
+            t_key = f"{task_id}_t_{model}"
+            score_payload[model] = {
+                "quality": int(st.session_state.get(q_key, 3)),
+                "tone": int(st.session_state.get(t_key, 3)),
+            }
+        save_scores_for_task(task_id, score_payload)
+        st.success(f"Saved scores for {task_id}")
+        saved_scores = load_scores_for_task(task_id)
+
+    all_scored = all(
+        m in saved_scores
+        for m in model_names
+    )
+
+    if not st.session_state[reveal_key] and all_scored:
+        if st.button("Reveal Model Names"):
+            time.sleep(0.2)
+            st.session_state[reveal_key] = True
+            st.experimental_rerun()
+
+    return saved_scores
+
 # --------------------------------------------
 # CUSTOM MODERN CSS
 # --------------------------------------------
@@ -226,232 +446,29 @@ def main():
 
     tasks = load_tasks()
     task_ids = [t["id"] for t in tasks]
-    params = st.query_params
-    # Extract task from query params (supports str or list)
-    param_task = params.get("task")
-    if isinstance(param_task, list):
-        param_task = param_task[0] if param_task else None
-    # Extract category from query params
     categories = sorted({t["category"] for t in tasks})
     category_options = ["All"] + categories
-    param_category = params.get("category")
-    if isinstance(param_category, list):
-        param_category = param_category[0] if param_category else None
-    if param_category not in category_options:
-        param_category = "All"
 
-    # Session state as source of truth
-    if "selected_category" not in st.session_state:
-        st.session_state.selected_category = param_category
-    if "active_task" not in st.session_state:
-        st.session_state.active_task = param_task or task_ids[0]
+    param_task, param_category = parse_query_params(task_ids, category_options)
+    ensure_session_defaults(param_task, param_category, task_ids)
 
-    #-----------------------------------------
-    # SIDEBAR
-    #-----------------------------------------
-    st.sidebar.title("Controls")
-    selected_category = st.sidebar.selectbox(
-        "Select Category",
-        category_options,
-        index=category_options.index(st.session_state.selected_category),
-    )
-    if selected_category != st.session_state.selected_category:
-        st.session_state.selected_category = selected_category
-        st.query_params["category"] = selected_category
-        st.session_state.active_task = None
-        st.experimental_rerun()
-
-    filtered_tasks = [t for t in tasks if selected_category == "All" or t["category"] == selected_category]
-    filtered_task_ids = [t["id"] for t in filtered_tasks]
-    if not filtered_task_ids:
-        st.error("No tasks for this category.")
+    selected_category, selected_task_id, filtered_task_ids = render_sidebar(tasks, category_options)
+    render_debug_panel(param_task, selected_category, selected_task_id, filtered_task_ids)
+    if not selected_task_id:
         return
-    if st.session_state.active_task not in filtered_task_ids:
-        st.session_state.active_task = filtered_task_ids[0]
-        st.query_params["task"] = st.session_state.active_task
-        st.query_params["category"] = selected_category
 
-    selected_task_id = st.sidebar.selectbox(
-        "Select Task",
-        filtered_task_ids,
-        index=filtered_task_ids.index(st.session_state.active_task),
-    )
-    # Keep query params in sync with selection
-    if selected_task_id != st.session_state.active_task:
-        st.session_state.active_task = selected_task_id
-        st.query_params["task"] = selected_task_id
-        st.query_params["category"] = selected_category
-        st.experimental_rerun()
-
-    st.sidebar.caption("Use the header arrows to move between tasks.")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Scores are saved to scores/scores.db")
-    with st.sidebar.expander("Debug state"):
-        st.json({
-            "param_task": param_task,
-            "selected_category": selected_category,
-            "selected_task_id": selected_task_id,
-            "state_active_task": st.session_state.active_task,
-            "filtered_task_ids": filtered_task_ids,
-            "curr_index": filtered_task_ids.index(selected_task_id) if selected_task_id in filtered_task_ids else None,
-        })
-
-    #-----------------------------------------
-    # MAIN AREA
-    #-----------------------------------------
     task = next(t for t in tasks if t["id"] == selected_task_id)
     saved_scores = load_scores_for_task(selected_task_id)
 
-    # Load model outputs
     responses = load_responses(selected_task_id)
     model_names = list(responses.keys())
     expected_models = len(model_names)
     scored_models = len(saved_scores)
     completed_tasks, total_tasks = task_completion_counts(task_ids, expected_models or 1)
 
-    # Navigation indices within filtered set
-    curr_index = filtered_task_ids.index(selected_task_id)
-
-    # Top bar with chips, progress, navigation
-    st.markdown("<div class='page-shell'>", unsafe_allow_html=True)
-    with st.container():
-        top_left, top_mid, top_right = st.columns([3, 3, 2])
-        with top_left:
-            st.markdown(f"<div class='pill pill-muted'>{task['category']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<h1 class='page-title'>{task['id']}</h1>", unsafe_allow_html=True)
-        with top_mid:
-            st.markdown(
-                f"<div class='pill pill-strong'>{min(scored_models, expected_models)}/{expected_models or '0'} models scored</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f"<div class='pill pill-soft'>{completed_tasks}/{total_tasks} tasks fully scored</div>",
-                unsafe_allow_html=True,
-            )
-        with top_right:
-            nav_prev, nav_next = st.columns(2)
-            if filtered_task_ids:
-                if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
-                    target_task, new_idx = clamp_task(st.session_state.active_task, filtered_task_ids, -1)
-                    st.session_state.active_task = target_task
-                    st.query_params["task"] = target_task
-                    st.query_params["category"] = selected_category
-                    print(f"[nav] prev clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
-                    st.experimental_rerun()
-                if nav_next.button("Next →", use_container_width=True, disabled=curr_index >= len(filtered_task_ids) - 1):
-                    target_task, new_idx = clamp_task(st.session_state.active_task, filtered_task_ids, 1)
-                    st.session_state.active_task = target_task
-                    st.query_params["task"] = target_task
-                    st.query_params["category"] = selected_category
-                    print(f"[nav] next clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
-                    st.experimental_rerun()
-
-    # Prompt card
-    st.markdown(
-        f"""
-        <div class='prompt-card'>
-            <div class='card-label'>Prompt</div>
-            <div>{task['prompt']}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Randomize order per session per task
-    seed_key = f"shuffle_{selected_task_id}"
-    if seed_key not in st.session_state:
-        st.session_state[seed_key] = random.random()
-    random.Random(st.session_state[seed_key]).shuffle(model_names)
-
-    # Detect if all scored → reveal names
-    reveal_key = f"reveal_{selected_task_id}"
-    if reveal_key not in st.session_state:
-        st.session_state[reveal_key] = False
-
-    st.markdown("### Model Responses", unsafe_allow_html=True)
-    save_clicked = False
-
-    if not model_names:
-        st.info("No model outputs found for this task.")
-    else:
-        # Header actions
-        if st.button("💾 Save scores", type="primary"):
-            save_clicked = True
-
-        cols_per_row = 2 if len(model_names) > 1 else 1
-        for start in range(0, len(model_names), cols_per_row):
-            row_models = model_names[start:start + cols_per_row]
-            cols = st.columns(len(row_models))
-            for idx_in_row, model in enumerate(row_models):
-                idx = start + idx_in_row
-                with cols[idx_in_row]:
-                    chip_html = (
-                        f"<span class='hidden-chip'>Model {chr(65+idx)}</span>"
-                        if not st.session_state[reveal_key]
-                        else f"<span class='reveal-chip' style='background:{model_color(idx)}'>{model}</span>"
-                    )
-                    st.markdown(chip_html, unsafe_allow_html=True)
-
-                    # Response box
-                    st.markdown(
-                        f"""
-                        <div class='model-card'>
-                            <div class='card-label'>Response</div>
-                            <div class='response-box'>{html.escape(responses[model])}</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                    # Sliders
-                    q_key = f"{selected_task_id}_q_{model}"
-                    t_key = f"{selected_task_id}_t_{model}"
-
-                    if q_key not in st.session_state and model in saved_scores:
-                        st.session_state[q_key] = saved_scores[model]["quality"]
-                    if t_key not in st.session_state and model in saved_scores:
-                        st.session_state[t_key] = saved_scores[model]["tone"]
-
-                    st.slider(
-                        "Quality",
-                        1,
-                        5,
-                        st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
-                        key=q_key,
-                    )
-                    st.slider(
-                        "Tone Fit",
-                        1,
-                        5,
-                        st.session_state.get(t_key, saved_scores.get(model, {}).get("tone", 3)),
-                        key=t_key,
-                    )
-
-    # SAVE HANDLER
-    if save_clicked and model_names:
-        score_payload = {}
-        for model in model_names:
-            q_key = f"{selected_task_id}_q_{model}"
-            t_key = f"{selected_task_id}_t_{model}"
-            score_payload[model] = {
-                "quality": int(st.session_state.get(q_key, 3)),
-                "tone": int(st.session_state.get(t_key, 3)),
-            }
-        save_scores_for_task(selected_task_id, score_payload)
-        st.success(f"Saved scores for {selected_task_id}")
-        saved_scores = load_scores_for_task(selected_task_id)
-
-    # REVEAL BUTTON
-    all_scored = all(
-        m in saved_scores
-        for m in model_names
-    )
-
-    if not st.session_state[reveal_key] and all_scored:
-        if st.button("Reveal Model Names"):
-            time.sleep(0.2)
-            st.session_state[reveal_key] = True
-            st.experimental_rerun()
+    render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category)
+    render_prompt(task)
+    render_model_responses(selected_task_id, model_names, responses, saved_scores)
 
 
 # --------------------------------------------
