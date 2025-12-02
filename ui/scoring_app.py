@@ -198,6 +198,7 @@ def render_sidebar(tasks, category_options):
     st.sidebar.caption("Use the header arrows to move between tasks.")
     st.sidebar.markdown("---")
     st.sidebar.caption("Scores are saved to scores/scores.db")
+    st.sidebar.caption("Leaderboard available via the Pages menu.")
 
     return selected_category, selected_task_id, filtered_task_ids
 
