@@ -221,15 +221,16 @@ def render_topbar(task, scored_models, expected_models, completed_tasks, total_t
     with st.container():
         top_left, top_mid, top_right = st.columns([3, 3, 2])
         with top_left:
-            st.markdown(f"<div class='pill pill-muted'>{task['category']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<h1 class='page-title'>{task['id']}</h1>", unsafe_allow_html=True)
+            st.markdown(f"<div class='pill pill-muted'>{task['category']} › {task['id']}</div>", unsafe_allow_html=True)
         with top_mid:
+            task_scored = expected_models > 0 and scored_models >= expected_models
+            status_text = "Task scored" if task_scored else "Task not scored"
+            pill_class = "pill-strong" if task_scored else "pill-muted"
             st.markdown(
-                f"<div class='pill pill-strong'>{min(scored_models, expected_models)}/{expected_models or '0'} models scored</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f"<div class='pill pill-soft'>{completed_tasks}/{total_tasks} tasks fully scored</div>",
+                f"<div style='display:flex; gap:8px; align-items:center; flex-wrap:wrap;'>"
+                f"<span class='pill {pill_class}'>{status_text}</span>"
+                f"<span class='pill pill-soft'>{completed_tasks}/{total_tasks} tasks fully scored</span>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
         with top_right:
@@ -256,7 +257,7 @@ def render_prompt(task):
         f"""
         <div class='prompt-card'>
             <div class='card-label'>Prompt</div>
-            <div>{task['prompt']}</div>
+            <div style="font-size:20px; line-height:1.4; font-weight:600;">{task['prompt']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -275,15 +276,21 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
     if reveal_key not in st.session_state:
         st.session_state[reveal_key] = False
 
-    st.markdown("### Model Responses", unsafe_allow_html=True)
     save_clicked = False
 
     if not model_names:
         st.info("No model outputs found for this task.")
         return saved_scores
 
-    if st.button("💾 Save scores", type="primary"):
-        save_clicked = True
+    col_save, col_reveal = st.columns([1,1])
+    with col_save:
+        if st.button("💾 Save scores", type="primary", use_container_width=True):
+            save_clicked = True
+    with col_reveal:
+        all_scored = all(m in saved_scores for m in model_names)
+        reveal_disabled = not all_scored
+        if st.button("Reveal Model Names", disabled=reveal_disabled, use_container_width=True):
+            st.session_state[f"reveal_{task_id}"] = True
 
     cols_per_row = 2 if len(model_names) > 1 else 1
     for start in range(0, len(model_names), cols_per_row):
@@ -292,27 +299,15 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
         for idx_in_row, model in enumerate(row_models):
             idx = start + idx_in_row
             with cols[idx_in_row]:
+                label = f"Model {chr(65+idx)}"
                 chip_html = (
-                    f"<span class='hidden-chip'>Model {chr(65+idx)}</span>"
+                    f"<span class='hidden-chip'>{label} response</span>"
                     if not st.session_state[reveal_key]
-                    else f"<span class='reveal-chip' style='background:{model_color(idx)}'>{model}</span>"
+                    else f"<span class='reveal-chip' style='background:{model_color(idx)}'>{model} response</span>"
                 )
                 st.markdown(chip_html, unsafe_allow_html=True)
 
-                st.markdown(
-                    f"""
-                    <div class='model-card'>
-                        <div class='card-label'>Response</div>
-                        <div class='response-box'>{html.escape(responses[model])}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
                 q_key = f"{task_id}_q_{model}"
-
-                if q_key not in st.session_state and model in saved_scores:
-                    st.session_state[q_key] = saved_scores[model]["quality"]
 
                 st.slider(
                     "Quality",
@@ -320,6 +315,15 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
                     5,
                     st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
                     key=q_key,
+                )
+
+                st.markdown(
+                    f"""
+                    <div class='model-card'>
+                        <div class='response-box'>{html.escape(responses[model])}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
 
     if save_clicked and model_names:
@@ -332,17 +336,7 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
         save_scores_for_task(task_id, score_payload)
         st.success(f"Saved scores for {task_id}")
         saved_scores = load_scores_for_task(task_id)
-
-    all_scored = all(
-        m in saved_scores
-        for m in model_names
-    )
-
-    if not st.session_state[reveal_key] and all_scored:
-        if st.button("Reveal Model Names"):
-            time.sleep(0.2)
-            st.session_state[reveal_key] = True
-            st.experimental_rerun()
+        st.session_state[reveal_key] = False
 
     return saved_scores
 
@@ -382,9 +376,9 @@ def inject_css():
         background: rgba(255,255,255,0.04);
         border: 1px solid rgba(255,255,255,0.08);
         border-radius: 12px;
-        padding: 16px 18px;
+        padding: 18px 20px;
     }
-    .model-card { height: 100%; min-height: 480px; display: flex; flex-direction: column; gap: 12px; }
+    .model-card { height: 100%; min-height: 520px; display: flex; flex-direction: column; gap: 12px; }
 
     .card-label {
         font-size: 12px;
@@ -403,7 +397,7 @@ def inject_css():
         color: rgba(255,255,255,0.92);
         font-size: 14px;
         line-height: 1.55;
-        max-height: 320px;
+        flex: 1;
         overflow: auto;
         white-space: pre-wrap;
     }
