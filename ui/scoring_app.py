@@ -280,12 +280,13 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
             idx = start + idx_in_row
             with cols[idx_in_row]:
                 label = f"Model {chr(65+idx)} response" if not st.session_state[reveal_key] else f"{model} response"
+                body = responses[model]
 
                 st.markdown(
                     f"""
                     <div class='model-card' >
                         <div class='card-label'>{label}</div>
-                        <div class='response-box'">{html.escape(responses[model])}</div>
+                        <div class='response-box'>{body}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -391,8 +392,9 @@ def inject_css():
         min-height: 180px;
         max-height: 400px;
         overflow: auto;
-        white-space: pre-wrap;
     }
+    .response-box p { margin: 0.25rem 0; }
+    .response-box ol, .response-box ul { margin: 0.25rem 0; padding-left: 1.2rem; }
 
     .hidden-chip {
         background: rgba(255,255,255,0.12);
