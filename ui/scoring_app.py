@@ -247,7 +247,7 @@ def render_prompt(task):
         f"""
         <div class='prompt-card' style="margin: 36px 0;">
             <div class='card-label'>Prompt</div>
-            <div style="font-size:18px; margin-top:8px;">{task['prompt']}</div>
+            <div style="font-size:18px; margin-top:12px;">{task['prompt']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -280,7 +280,7 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
             idx = start + idx_in_row
             with cols[idx_in_row]:
                 label = f"Model {chr(65+idx)} response" if not st.session_state[reveal_key] else f"{model} response"
-                body_md = responses[model].replace("\n", "  \n")
+                body_md = responses[model].replace("\n", "<br>")
                 wrapped = (
                     f"<div class='model-card'>"
                     f"<div class='card-label'>{label}</div>"
@@ -368,7 +368,11 @@ def inject_css():
         border-radius: 12px;
         padding: 16px 18px;
     }
-    .model-card { height: 100%; height: 480px; display: flex; flex-direction: column; gap: 8px; }
+    .prompt-card {
+        border-left: 4px solid #4F8BFF;
+        background: rgba(79,139,255,0.08);
+    }
+    .model-card { height: 100%; min-height: 320px; display: flex; flex-direction: column; gap: 8px; }
 
     .card-label {
         font-size: 12px;
