@@ -247,7 +247,7 @@ def render_prompt(task):
         f"""
         <div class='prompt-card' style="margin: 36px 0;">
             <div class='card-label'>Prompt</div>
-            <div style="font-size:18px;">{task['prompt']}</div>
+            <div style="font-size:18px; margin-top:8px;">{task['prompt']}</div>
         </div>
         """,
         unsafe_allow_html=True,
