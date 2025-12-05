@@ -161,6 +161,7 @@ def ensure_session_defaults(param_task, param_category, task_ids):
 
 
 def render_sidebar(tasks, category_options):
+    st.sidebar.markdown("<div style='font-size:14px;'>", unsafe_allow_html=True)
     st.sidebar.title("Controls")
     selected_category = st.sidebar.selectbox(
         "Select Category",
@@ -199,20 +200,9 @@ def render_sidebar(tasks, category_options):
     st.sidebar.markdown("---")
     st.sidebar.caption("Scores are saved to scores/scores.db")
     st.sidebar.caption("Leaderboard available via the Pages menu.")
+    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     return selected_category, selected_task_id, filtered_task_ids
-
-
-def render_debug_panel(param_task, selected_category, selected_task_id, filtered_task_ids):
-    with st.sidebar.expander("Debug state"):
-        st.json({
-            "param_task": param_task,
-            "selected_category": selected_category,
-            "selected_task_id": selected_task_id,
-            "state_active_task": st.session_state.get("active_task"),
-            "filtered_task_ids": filtered_task_ids,
-            "curr_index": filtered_task_ids.index(selected_task_id) if selected_task_id in filtered_task_ids else None,
-        })
 
 
 def render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category):
@@ -255,9 +245,9 @@ def render_topbar(task, scored_models, expected_models, completed_tasks, total_t
 def render_prompt(task):
     st.markdown(
         f"""
-        <div class='prompt-card'>
+        <div class='prompt-card' style="margin: 36px 0;">
             <div class='card-label'>Prompt</div>
-            <div style="font-size:20px; line-height:1.4; font-weight:600;">{task['prompt']}</div>
+            <div style="font-size:18px;">{task['prompt']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -282,6 +272,42 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
         st.info("No model outputs found for this task.")
         return saved_scores
 
+    cols_per_row = 2 if len(model_names) > 1 else 1
+    for start in range(0, len(model_names), cols_per_row):
+        row_models = model_names[start:start + cols_per_row]
+        cols = st.columns(len(row_models))
+        for idx_in_row, model in enumerate(row_models):
+            idx = start + idx_in_row
+            with cols[idx_in_row]:
+                label = f"Model {chr(65+idx)} response" if not st.session_state[reveal_key] else f"{model} response"
+
+                st.markdown(
+                    f"""
+                    <div class='model-card' >
+                        <div class='card-label'>{label}</div>
+                        <div class='response-box'">{html.escape(responses[model])}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    # Scoring sliders under cards (aligned heights)
+    cols_per_row = 2 if len(model_names) > 1 else 1
+    for start in range(0, len(model_names), cols_per_row):
+        row_models = model_names[start:start + cols_per_row]
+        cols = st.columns(len(row_models))
+        for idx_in_row, model in enumerate(row_models):
+            idx = start + idx_in_row
+            with cols[idx_in_row]:
+                q_key = f"{task_id}_q_{model}"
+                st.slider(
+                    f"Quality ({'Model ' + chr(65+idx) if not st.session_state[reveal_key] else model})",
+                    1,
+                    5,
+                    st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
+                    key=q_key,
+                )
+
     col_save, col_reveal = st.columns([1,1])
     with col_save:
         if st.button("💾 Save scores", type="primary", use_container_width=True):
@@ -291,40 +317,6 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
         reveal_disabled = not all_scored
         if st.button("Reveal Model Names", disabled=reveal_disabled, use_container_width=True):
             st.session_state[f"reveal_{task_id}"] = True
-
-    cols_per_row = 2 if len(model_names) > 1 else 1
-    for start in range(0, len(model_names), cols_per_row):
-        row_models = model_names[start:start + cols_per_row]
-        cols = st.columns(len(row_models))
-        for idx_in_row, model in enumerate(row_models):
-            idx = start + idx_in_row
-            with cols[idx_in_row]:
-                label = f"Model {chr(65+idx)}"
-                chip_html = (
-                    f"<span class='hidden-chip'>{label} response</span>"
-                    if not st.session_state[reveal_key]
-                    else f"<span class='reveal-chip' style='background:{model_color(idx)}'>{model} response</span>"
-                )
-                st.markdown(chip_html, unsafe_allow_html=True)
-
-                q_key = f"{task_id}_q_{model}"
-
-                st.slider(
-                    "Quality",
-                    1,
-                    5,
-                    st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
-                    key=q_key,
-                )
-
-                st.markdown(
-                    f"""
-                    <div class='model-card'>
-                        <div class='response-box'>{html.escape(responses[model])}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
 
     if save_clicked and model_names:
         score_payload = {}
@@ -346,8 +338,8 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
 def inject_css():
     st.markdown("""
 <style>
-    .page-shell { padding-top: 12px; }
-    .page-title { margin: 4px 0 8px 0; }
+    .page-shell { padding-top: 4px; }
+    .page-title { margin: 4px 0 4px 0; }
     .section-heading { margin: 12px 0 8px 0; }
 
     .top-bar {
@@ -376,9 +368,9 @@ def inject_css():
         background: rgba(255,255,255,0.04);
         border: 1px solid rgba(255,255,255,0.08);
         border-radius: 12px;
-        padding: 18px 20px;
+        padding: 16px 18px;
     }
-    .model-card { height: 100%; min-height: 520px; display: flex; flex-direction: column; gap: 12px; }
+    .model-card { height: 100%; height: 480px; display: flex; flex-direction: column; gap: 8px; }
 
     .card-label {
         font-size: 12px;
@@ -386,18 +378,18 @@ def inject_css():
         letter-spacing: 0.02em;
         text-transform: uppercase;
         color: rgba(255,255,255,0.7);
-        margin-bottom: 6px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
     }
 
     .response-box {
-        background: rgba(0,0,0,0.25);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 10px;
-        padding: 12px 14px;
+        background: transparent;
+        border: none;
+        padding: 4px 0;
         color: rgba(255,255,255,0.92);
-        font-size: 14px;
-        line-height: 1.55;
-        flex: 1;
+        flex: 0 0 auto;
+        min-height: 180px;
+        max-height: 400px;
         overflow: auto;
         white-space: pre-wrap;
     }
@@ -419,6 +411,15 @@ def inject_css():
         color: white;
         display: inline-block;
         margin-bottom: 6px;
+    }
+
+    /* Sidebar tighter + smaller font */
+    [data-testid="stSidebar"] {
+        min-width: 220px;
+        max-width: 240px;
+    }
+    [data-testid="stSidebar"] * {
+        font-size: 14px;
     }
 </style>
     """, unsafe_allow_html=True)
@@ -453,7 +454,6 @@ def main():
     ensure_session_defaults(param_task, param_category, task_ids)
 
     selected_category, selected_task_id, filtered_task_ids = render_sidebar(tasks, category_options)
-    render_debug_panel(param_task, selected_category, selected_task_id, filtered_task_ids)
     if not selected_task_id:
         return
 
