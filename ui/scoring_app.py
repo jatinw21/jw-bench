@@ -280,17 +280,14 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
             idx = start + idx_in_row
             with cols[idx_in_row]:
                 label = f"Model {chr(65+idx)} response" if not st.session_state[reveal_key] else f"{model} response"
-                body = responses[model]
-
-                st.markdown(
-                    f"""
-                    <div class='model-card' >
-                        <div class='card-label'>{label}</div>
-                        <div class='response-box'>{body}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+                body_md = responses[model].replace("\n", "  \n")
+                wrapped = (
+                    f"<div class='model-card'>"
+                    f"<div class='card-label'>{label}</div>"
+                    f"<div class='response-box'>\n\n{body_md}\n\n</div>"
+                    f"</div>"
                 )
+                st.markdown(wrapped, unsafe_allow_html=True)
 
     # Scoring sliders under cards (aligned heights)
     cols_per_row = 2 if len(model_names) > 1 else 1
