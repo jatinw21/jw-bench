@@ -55,14 +55,18 @@ def generate_comparison_graphic(by_cat_df, model1, model2):
     bar_height = 0.6
     max_score = 5  # Quality scores are 1-5
 
+    # Distinct colors for better contrast
+    COLOR_MODEL1 = "#F97316"  # Orange
+    COLOR_MODEL2 = "#3B82F6"  # Blue
+
     # Draw bars extending from center
     # Model 1 (left side) - bars go negative direction
     ax.barh(y_pos, [-v for v in m1_values], height=bar_height,
-            color=ACCENT_PRIMARY, alpha=0.9, label=model1)
+            color=COLOR_MODEL1, alpha=0.9, label=model1)
 
     # Model 2 (right side) - bars go positive direction
     ax.barh(y_pos, m2_values, height=bar_height,
-            color=ACCENT_SECONDARY, alpha=0.9, label=model2)
+            color=COLOR_MODEL2, alpha=0.9, label=model2)
 
     # Add value labels on bars
     for i, (v1, v2) in enumerate(zip(m1_values, m2_values)):
@@ -96,13 +100,13 @@ def generate_comparison_graphic(by_cat_df, model1, model2):
     m1_short = model1.split('/')[-1] if '/' in model1 else model1
     m2_short = model2.split('/')[-1] if '/' in model2 else model2
 
-    # Model headers at top
+    # Model headers at top (matching bar colors)
     ax.text(-max_score/2, len(categories) + 0.3, m1_short,
             ha='center', va='bottom', fontsize=14, fontweight='700',
-            color=ACCENT_PRIMARY)
+            color=COLOR_MODEL1)
     ax.text(max_score/2, len(categories) + 0.3, m2_short,
             ha='center', va='bottom', fontsize=14, fontweight='700',
-            color=ACCENT_SECONDARY)
+            color=COLOR_MODEL2)
 
     # Title
     fig.suptitle("Model Comparison by Category", fontsize=18, fontweight='700',
