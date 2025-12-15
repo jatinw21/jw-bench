@@ -1,9 +1,11 @@
+import warnings
+warnings.filterwarnings("ignore", message="coroutine 'expire_cache' was never awaited")
+
 import streamlit as st
 import json
 import os
 import random
 import time
-import html
 from pathlib import Path
 import sqlite3
 
@@ -30,6 +32,19 @@ def load_tasks():
 # --------------------------------------------
 # LOAD MODEL RESPONSES FOR A TASK
 # --------------------------------------------
+def get_all_available_models():
+    """Get all model names from outputs directory."""
+    models = []
+    for vendor_dir in Path(OUTPUT_DIR).glob("*"):
+        if not vendor_dir.is_dir():
+            continue
+        for model_dir in vendor_dir.glob("*"):
+            if not model_dir.is_dir():
+                continue
+            models.append(f"{vendor_dir.name}/{model_dir.name}")
+    return sorted(models)
+
+
 def load_responses(task_id):
     outputs = {}
 
@@ -60,36 +75,53 @@ def init_db():
                 task_id TEXT NOT NULL,
                 model TEXT NOT NULL,
                 quality INTEGER NOT NULL,
-                tone INTEGER NOT NULL,
                 timestamp REAL NOT NULL,
                 PRIMARY KEY (task_id, model)
             )
             """
         )
+        # Migrate old schema with tone column to new schema without tone
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(scores)").fetchall()]
+        if "tone" in cols:
+            conn.execute("ALTER TABLE scores RENAME TO scores_old")
+            conn.execute(
+                """
+                CREATE TABLE scores (
+                    task_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    quality INTEGER NOT NULL,
+                    timestamp REAL NOT NULL,
+                    PRIMARY KEY (task_id, model)
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO scores (task_id, model, quality, timestamp) SELECT task_id, model, quality, timestamp FROM scores_old"
+            )
+            conn.execute("DROP TABLE scores_old")
 
 def load_scores_for_task(task_id):
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT model, quality, tone FROM scores WHERE task_id = ?",
+            "SELECT model, quality FROM scores WHERE task_id = ?",
             (task_id,),
         ).fetchall()
-    return {model: {"quality": quality, "tone": tone} for model, quality, tone in rows}
+    return {model: {"quality": quality} for model, quality in rows}
 
 def save_scores_for_task(task_id, scores):
     now = time.time()
     records = [
-        (task_id, model, vals["quality"], vals["tone"], now)
+        (task_id, model, vals["quality"], now)
         for model, vals in scores.items()
     ]
     with sqlite3.connect(DB_PATH) as conn:
         conn.executemany(
             """
-            INSERT INTO scores (task_id, model, quality, tone, timestamp)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO scores (task_id, model, quality, timestamp)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(task_id, model)
             DO UPDATE SET
                 quality = excluded.quality,
-                tone = excluded.tone,
                 timestamp = excluded.timestamp
             """,
             records,
@@ -143,7 +175,8 @@ def ensure_session_defaults(param_task, param_category, task_ids):
         st.session_state.active_task = param_task or task_ids[0]
 
 
-def render_sidebar(tasks, category_options):
+def render_sidebar(tasks, category_options, all_models):
+    st.sidebar.markdown("<div style='font-size:14px;'>", unsafe_allow_html=True)
     st.sidebar.title("Controls")
     selected_category = st.sidebar.selectbox(
         "Select Category",
@@ -154,13 +187,13 @@ def render_sidebar(tasks, category_options):
         st.session_state.selected_category = selected_category
         st.query_params["category"] = selected_category
         st.session_state.active_task = None
-        st.experimental_rerun()
+        st.rerun()
 
     filtered_tasks = [t for t in tasks if selected_category == "All" or t["category"] == selected_category]
     filtered_task_ids = [t["id"] for t in filtered_tasks]
     if not filtered_task_ids:
         st.error("No tasks for this category.")
-        return selected_category, None, []
+        return selected_category, None, [], []
 
     if st.session_state.active_task not in filtered_task_ids:
         st.session_state.active_task = filtered_task_ids[0]
@@ -176,25 +209,28 @@ def render_sidebar(tasks, category_options):
         st.session_state.active_task = selected_task_id
         st.query_params["task"] = selected_task_id
         st.query_params["category"] = selected_category
-        st.experimental_rerun()
+        st.rerun()
 
-    st.sidebar.caption("Use the header arrows to move between tasks.")
     st.sidebar.markdown("---")
-    st.sidebar.caption("Scores are saved to scores/scores.db")
 
-    return selected_category, selected_task_id, filtered_task_ids
+    # Model selection
+    if "selected_models" not in st.session_state:
+        st.session_state.selected_models = all_models
 
+    selected_models = st.sidebar.multiselect(
+        "Models to Compare",
+        options=all_models,
+        default=st.session_state.selected_models,
+        help="Select which models to display and score",
+    )
 
-def render_debug_panel(param_task, selected_category, selected_task_id, filtered_task_ids):
-    with st.sidebar.expander("Debug state"):
-        st.json({
-            "param_task": param_task,
-            "selected_category": selected_category,
-            "selected_task_id": selected_task_id,
-            "state_active_task": st.session_state.get("active_task"),
-            "filtered_task_ids": filtered_task_ids,
-            "curr_index": filtered_task_ids.index(selected_task_id) if selected_task_id in filtered_task_ids else None,
-        })
+    if selected_models != st.session_state.selected_models:
+        st.session_state.selected_models = selected_models
+        st.rerun()
+
+    st.sidebar.markdown("</div>", unsafe_allow_html=True)
+
+    return selected_category, selected_task_id, filtered_task_ids, selected_models
 
 
 def render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category):
@@ -203,42 +239,41 @@ def render_topbar(task, scored_models, expected_models, completed_tasks, total_t
     with st.container():
         top_left, top_mid, top_right = st.columns([3, 3, 2])
         with top_left:
-            st.markdown(f"<div class='pill pill-muted'>{task['category']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<h1 class='page-title'>{task['id']}</h1>", unsafe_allow_html=True)
+            st.markdown(f"<div class='pill pill-muted'>{task['category']} › {task['id']}</div>", unsafe_allow_html=True)
         with top_mid:
+            task_scored = expected_models > 0 and scored_models >= expected_models
+            status_text = "Task scored" if task_scored else "Task not scored"
+            pill_class = "pill-strong" if task_scored else "pill-muted"
             st.markdown(
-                f"<div class='pill pill-strong'>{min(scored_models, expected_models)}/{expected_models or '0'} models scored</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f"<div class='pill pill-soft'>{completed_tasks}/{total_tasks} tasks fully scored</div>",
+                f"<div style='display:flex; gap:8px; align-items:center; flex-wrap:wrap;'>"
+                f"<span class='pill {pill_class}'>{status_text}</span>"
+                f"<span class='pill pill-soft'>{completed_tasks}/{total_tasks} tasks fully scored</span>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
         with top_right:
             nav_prev, nav_next = st.columns(2)
             if filtered_task_ids:
                 if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
-                    target_task, new_idx = clamp_task(task["id"], filtered_task_ids, -1)
+                    target_task, _ = clamp_task(task["id"], filtered_task_ids, -1)
                     st.session_state.active_task = target_task
                     st.query_params["task"] = target_task
                     st.query_params["category"] = selected_category
-                    print(f"[nav] prev clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
-                    st.experimental_rerun()
+                    st.rerun()
                 if nav_next.button("Next →", use_container_width=True, disabled=curr_index >= len(filtered_task_ids) - 1):
-                    target_task, new_idx = clamp_task(task["id"], filtered_task_ids, 1)
+                    target_task, _ = clamp_task(task["id"], filtered_task_ids, 1)
                     st.session_state.active_task = target_task
                     st.query_params["task"] = target_task
                     st.query_params["category"] = selected_category
-                    print(f"[nav] next clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
-                    st.experimental_rerun()
+                    st.rerun()
 
 
 def render_prompt(task):
     st.markdown(
         f"""
-        <div class='prompt-card'>
+        <div class='prompt-card' style="margin: 36px 0;">
             <div class='card-label'>Prompt</div>
-            <div>{task['prompt']}</div>
+            <div style="font-size:18px; margin-top:12px;">{task['prompt']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -257,15 +292,11 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
     if reveal_key not in st.session_state:
         st.session_state[reveal_key] = False
 
-    st.markdown("### Model Responses", unsafe_allow_html=True)
     save_clicked = False
 
     if not model_names:
         st.info("No model outputs found for this task.")
         return saved_scores
-
-    if st.button("💾 Save scores", type="primary"):
-        save_clicked = True
 
     cols_per_row = 2 if len(model_names) > 1 else 1
     for start in range(0, len(model_names), cols_per_row):
@@ -274,154 +305,69 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
         for idx_in_row, model in enumerate(row_models):
             idx = start + idx_in_row
             with cols[idx_in_row]:
-                chip_html = (
-                    f"<span class='hidden-chip'>Model {chr(65+idx)}</span>"
-                    if not st.session_state[reveal_key]
-                    else f"<span class='reveal-chip' style='background:{model_color(idx)}'>{model}</span>"
+                label = f"Model {chr(65+idx)} response" if not st.session_state[reveal_key] else f"{model} response"
+                body_md = responses[model].replace("\n", "<br>")
+                wrapped = (
+                    f"<div class='model-card'>"
+                    f"<div class='card-label'>{label}</div>"
+                    f"<div class='response-box'>\n\n{body_md}\n\n</div>"
+                    f"</div>"
                 )
-                st.markdown(chip_html, unsafe_allow_html=True)
+                st.markdown(wrapped, unsafe_allow_html=True)
 
-                st.markdown(
-                    f"""
-                    <div class='model-card'>
-                        <div class='card-label'>Response</div>
-                        <div class='response-box'>{html.escape(responses[model])}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+    # Scoring sliders under cards (aligned heights)
+    cols_per_row = 2 if len(model_names) > 1 else 1
+    for start in range(0, len(model_names), cols_per_row):
+        row_models = model_names[start:start + cols_per_row]
+        cols = st.columns(len(row_models))
+        for idx_in_row, model in enumerate(row_models):
+            idx = start + idx_in_row
+            with cols[idx_in_row]:
+                sub_left, sub_mid, sub_right = st.columns([0.1, 0.8, 0.1])
+                with sub_mid:
+                    q_key = f"{task_id}_q_{model}"
+                    st.slider(
+                        f"Quality ({'Model ' + chr(65+idx) if not st.session_state[reveal_key] else model})",
+                        1,
+                        5,
+                        st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
+                        key=q_key,
+                    )
 
-                q_key = f"{task_id}_q_{model}"
-                t_key = f"{task_id}_t_{model}"
-
-                if q_key not in st.session_state and model in saved_scores:
-                    st.session_state[q_key] = saved_scores[model]["quality"]
-                if t_key not in st.session_state and model in saved_scores:
-                    st.session_state[t_key] = saved_scores[model]["tone"]
-
-                st.slider(
-                    "Quality",
-                    1,
-                    5,
-                    st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
-                    key=q_key,
-                )
-                st.slider(
-                    "Tone Fit",
-                    1,
-                    5,
-                    st.session_state.get(t_key, saved_scores.get(model, {}).get("tone", 3)),
-                    key=t_key,
-                )
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+    spacer_left, center_col, spacer_right = st.columns([2, 3, 2])
+    with center_col:
+        if st.button("💾 Save scores", type="primary", use_container_width=True):
+            save_clicked = True
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+    spacer_left2, center_col2, spacer_right2 = st.columns([2, 3, 2])
+    with center_col2:
+        all_scored = all(m in saved_scores for m in model_names)
+        reveal_disabled = not all_scored
+        if st.button("Reveal Model Names", disabled=reveal_disabled, use_container_width=True):
+            st.session_state[f"reveal_{task_id}"] = True
 
     if save_clicked and model_names:
         score_payload = {}
         for model in model_names:
             q_key = f"{task_id}_q_{model}"
-            t_key = f"{task_id}_t_{model}"
             score_payload[model] = {
                 "quality": int(st.session_state.get(q_key, 3)),
-                "tone": int(st.session_state.get(t_key, 3)),
             }
         save_scores_for_task(task_id, score_payload)
-        st.success(f"Saved scores for {task_id}")
-        saved_scores = load_scores_for_task(task_id)
-
-    all_scored = all(
-        m in saved_scores
-        for m in model_names
-    )
-
-    if not st.session_state[reveal_key] and all_scored:
-        if st.button("Reveal Model Names"):
-            time.sleep(0.2)
-            st.session_state[reveal_key] = True
-            st.experimental_rerun()
+        st.rerun()
 
     return saved_scores
 
 # --------------------------------------------
 # CUSTOM MODERN CSS
 # --------------------------------------------
+STYLES_PATH = Path(__file__).parent / "styles.css"
+
 def inject_css():
-    st.markdown("""
-<style>
-    .page-shell { padding-top: 12px; }
-    .page-title { margin: 4px 0 8px 0; }
-    .section-heading { margin: 12px 0 8px 0; }
-
-    .top-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 0 4px 0;
-        flex-wrap: wrap;
-    }
-
-    .pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-    }
-    .pill-muted { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); }
-    .pill-strong { background: linear-gradient(120deg, #6E8EF5, #9B6BFF); color: #fff; }
-    .pill-soft { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.75); }
-
-    .prompt-card, .model-card {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px;
-        padding: 16px 18px;
-    }
-    .model-card { height: 100%; min-height: 480px; display: flex; flex-direction: column; gap: 12px; }
-
-    .card-label {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        color: rgba(255,255,255,0.7);
-        margin-bottom: 6px;
-    }
-
-    .response-box {
-        background: rgba(0,0,0,0.25);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 10px;
-        padding: 12px 14px;
-        color: rgba(255,255,255,0.92);
-        font-size: 14px;
-        line-height: 1.55;
-        max-height: 320px;
-        overflow: auto;
-        white-space: pre-wrap;
-    }
-
-    .hidden-chip {
-        background: rgba(255,255,255,0.12);
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 12px;
-        color: rgba(255,255,255,0.85);
-        display: inline-block;
-        margin-bottom: 6px;
-    }
-
-    .reveal-chip {
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 12px;
-        color: white;
-        display: inline-block;
-        margin-bottom: 6px;
-    }
-</style>
-    """, unsafe_allow_html=True)
+    css = STYLES_PATH.read_text(encoding="utf-8")
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 # --------------------------------------------
 # COLOR MAPPING FOR MODELS
@@ -448,12 +394,12 @@ def main():
     task_ids = [t["id"] for t in tasks]
     categories = sorted({t["category"] for t in tasks})
     category_options = ["All"] + categories
+    all_models = get_all_available_models()
 
     param_task, param_category = parse_query_params(task_ids, category_options)
     ensure_session_defaults(param_task, param_category, task_ids)
 
-    selected_category, selected_task_id, filtered_task_ids = render_sidebar(tasks, category_options)
-    render_debug_panel(param_task, selected_category, selected_task_id, filtered_task_ids)
+    selected_category, selected_task_id, filtered_task_ids, selected_models = render_sidebar(tasks, category_options, all_models)
     if not selected_task_id:
         return
 
@@ -461,13 +407,17 @@ def main():
     saved_scores = load_scores_for_task(selected_task_id)
 
     responses = load_responses(selected_task_id)
-    model_names = list(responses.keys())
+    # Filter to only selected models
+    model_names = [m for m in responses.keys() if m in selected_models]
     expected_models = len(model_names)
-    scored_models = len(saved_scores)
+    # Only count scores for selected models
+    scored_models = sum(1 for m in model_names if m in saved_scores)
     completed_tasks, total_tasks = task_completion_counts(task_ids, expected_models or 1)
 
     render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category)
-    render_prompt(task)
+    spacer_left, prompt_col, spacer_right = st.columns([0.15, 0.7, 0.15])
+    with prompt_col:
+        render_prompt(task)
     render_model_responses(selected_task_id, model_names, responses, saved_scores)
 
 
