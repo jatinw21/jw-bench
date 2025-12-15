@@ -29,6 +29,19 @@ def load_tasks():
 # --------------------------------------------
 # LOAD MODEL RESPONSES FOR A TASK
 # --------------------------------------------
+def get_all_available_models():
+    """Get all model names from outputs directory."""
+    models = []
+    for vendor_dir in Path(OUTPUT_DIR).glob("*"):
+        if not vendor_dir.is_dir():
+            continue
+        for model_dir in vendor_dir.glob("*"):
+            if not model_dir.is_dir():
+                continue
+            models.append(f"{vendor_dir.name}/{model_dir.name}")
+    return sorted(models)
+
+
 def load_responses(task_id):
     outputs = {}
 
@@ -159,7 +172,7 @@ def ensure_session_defaults(param_task, param_category, task_ids):
         st.session_state.active_task = param_task or task_ids[0]
 
 
-def render_sidebar(tasks, category_options):
+def render_sidebar(tasks, category_options, all_models):
     st.sidebar.markdown("<div style='font-size:14px;'>", unsafe_allow_html=True)
     st.sidebar.title("Controls")
     selected_category = st.sidebar.selectbox(
@@ -171,13 +184,13 @@ def render_sidebar(tasks, category_options):
         st.session_state.selected_category = selected_category
         st.query_params["category"] = selected_category
         st.session_state.active_task = None
-        st.experimental_rerun()
+        st.rerun()
 
     filtered_tasks = [t for t in tasks if selected_category == "All" or t["category"] == selected_category]
     filtered_task_ids = [t["id"] for t in filtered_tasks]
     if not filtered_task_ids:
         st.error("No tasks for this category.")
-        return selected_category, None, []
+        return selected_category, None, [], []
 
     if st.session_state.active_task not in filtered_task_ids:
         st.session_state.active_task = filtered_task_ids[0]
@@ -193,11 +206,28 @@ def render_sidebar(tasks, category_options):
         st.session_state.active_task = selected_task_id
         st.query_params["task"] = selected_task_id
         st.query_params["category"] = selected_category
-        st.experimental_rerun()
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
+    # Model selection
+    if "selected_models" not in st.session_state:
+        st.session_state.selected_models = all_models
+
+    selected_models = st.sidebar.multiselect(
+        "Models to Compare",
+        options=all_models,
+        default=st.session_state.selected_models,
+        help="Select which models to display and score",
+    )
+
+    if selected_models != st.session_state.selected_models:
+        st.session_state.selected_models = selected_models
+        st.rerun()
 
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
-    return selected_category, selected_task_id, filtered_task_ids
+    return selected_category, selected_task_id, filtered_task_ids, selected_models
 
 
 def render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category):
@@ -222,19 +252,17 @@ def render_topbar(task, scored_models, expected_models, completed_tasks, total_t
             nav_prev, nav_next = st.columns(2)
             if filtered_task_ids:
                 if nav_prev.button("← Previous", use_container_width=True, disabled=curr_index == 0):
-                    target_task, new_idx = clamp_task(task["id"], filtered_task_ids, -1)
+                    target_task, _ = clamp_task(task["id"], filtered_task_ids, -1)
                     st.session_state.active_task = target_task
                     st.query_params["task"] = target_task
                     st.query_params["category"] = selected_category
-                    print(f"[nav] prev clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
-                    st.experimental_rerun()
+                    st.rerun()
                 if nav_next.button("Next →", use_container_width=True, disabled=curr_index >= len(filtered_task_ids) - 1):
-                    target_task, new_idx = clamp_task(task["id"], filtered_task_ids, 1)
+                    target_task, _ = clamp_task(task["id"], filtered_task_ids, 1)
                     st.session_state.active_task = target_task
                     st.query_params["task"] = target_task
                     st.query_params["category"] = selected_category
-                    print(f"[nav] next clicked: curr_index={curr_index}, new_idx={new_idx}, task={target_task}")
-                    st.experimental_rerun()
+                    st.rerun()
 
 
 def render_prompt(task):
@@ -363,11 +391,12 @@ def main():
     task_ids = [t["id"] for t in tasks]
     categories = sorted({t["category"] for t in tasks})
     category_options = ["All"] + categories
+    all_models = get_all_available_models()
 
     param_task, param_category = parse_query_params(task_ids, category_options)
     ensure_session_defaults(param_task, param_category, task_ids)
 
-    selected_category, selected_task_id, filtered_task_ids = render_sidebar(tasks, category_options)
+    selected_category, selected_task_id, filtered_task_ids, selected_models = render_sidebar(tasks, category_options, all_models)
     if not selected_task_id:
         return
 
@@ -375,9 +404,11 @@ def main():
     saved_scores = load_scores_for_task(selected_task_id)
 
     responses = load_responses(selected_task_id)
-    model_names = list(responses.keys())
+    # Filter to only selected models
+    model_names = [m for m in responses.keys() if m in selected_models]
     expected_models = len(model_names)
-    scored_models = len(saved_scores)
+    # Only count scores for selected models
+    scored_models = sum(1 for m in model_names if m in saved_scores)
     completed_tasks, total_tasks = task_completion_counts(task_ids, expected_models or 1)
 
     render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category)

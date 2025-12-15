@@ -117,34 +117,32 @@
     border-color: var(--accent-secondary) !important;
 }
 
-/* Slider styling */
-.stSlider [data-baseweb="slider"] [role="slider"] {
-    background-color: var(--accent-primary) !important;
+/* Slider and checkbox - use Streamlit theme defaults */
+
+/* Multiselect styling */
+.stMultiSelect [data-baseweb="select"] {
+    border-color: rgba(255,255,255,0.2) !important;
 }
-.stSlider [data-baseweb="slider"] [data-testid="stTickBar"] > div {
-    background-color: var(--accent-primary) !important;
+.stMultiSelect [data-baseweb="select"]:focus-within {
+    border-color: var(--accent-primary) !important;
+    box-shadow: 0 0 0 1px var(--accent-primary) !important;
 }
-.stSlider div[data-baseweb="slider"] > div:first-child > div {
-    background: var(--accent-primary) !important;
-}
-.stSlider div[data-baseweb="slider"] > div > div > div {
+.stMultiSelect [data-baseweb="tag"] {
     background-color: var(--accent-primary) !important;
 }
 
-/* Checkbox styling */
-.stCheckbox [data-baseweb="checkbox"] input:checked + div {
-    background-color: var(--accent-primary) !important;
+/* Selectbox focus */
+.stSelectbox [data-baseweb="select"]:focus-within {
     border-color: var(--accent-primary) !important;
-}
-.stCheckbox [data-baseweb="checkbox"]:hover input + div {
-    border-color: var(--accent-primary) !important;
-}
-[data-testid="stCheckbox"] > label > div:first-child {
-    background-color: var(--accent-primary) !important;
-    border-color: var(--accent-primary) !important;
+    box-shadow: 0 0 0 1px var(--accent-primary) !important;
 }
 
 /* Focus rings */
 *:focus-visible {
     outline-color: var(--accent-primary) !important;
+}
+
+/* Override any remaining red/pink from Streamlit theme */
+[data-testid="stWidgetLabel"] {
+    color: rgba(255,255,255,0.85) !important;
 }
