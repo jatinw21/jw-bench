@@ -4,6 +4,27 @@
     --accent-secondary: #7C3AED;
 }
 
+/* Typography for legibility */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+html, body, [class*="st-"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Body text - slightly lighter weight for dark bg */
+p, span, div, label {
+    font-weight: 400;
+    letter-spacing: 0.01em;
+}
+
+/* Headers - medium weight */
+h1, h2, h3, h4, h5, h6, .stTitle, .stHeader {
+    font-weight: 600 !important;
+    letter-spacing: -0.01em;
+}
+
 .page-shell { padding-top: 4px; }
 .page-title { margin: 4px 0 4px 0; }
 .section-heading { margin: 12px 0 8px 0; }

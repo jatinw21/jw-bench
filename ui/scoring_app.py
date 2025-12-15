@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", message="coroutine 'expire_cache' was never awaited")
+
 import streamlit as st
 import json
 import os
