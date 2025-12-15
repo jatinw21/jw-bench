@@ -8,6 +8,12 @@ import streamlit as st
 BASE_DIR = Path(__file__).resolve().parents[2]
 DB_PATH = BASE_DIR / "scores" / "scores.db"
 TASK_FILE = BASE_DIR / "data" / "full_set.jsonl"
+STYLES_PATH = Path(__file__).resolve().parents[1] / "styles.css"
+
+
+def inject_css():
+    css = STYLES_PATH.read_text(encoding="utf-8")
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 @st.cache_data
@@ -112,6 +118,7 @@ def render_by_task(by_task_df, tasks_df, show_table):
 
 def main():
     st.set_page_config(page_title="LLM Leaderboard", layout="wide")
+    inject_css()
     st.title("LLM Scoring Leaderboard")
     st.caption("Compare model quality scores overall, by category, and by task.")
 

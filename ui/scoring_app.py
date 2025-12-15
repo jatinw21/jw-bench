@@ -3,7 +3,6 @@ import json
 import os
 import random
 import time
-import html
 from pathlib import Path
 import sqlite3
 
@@ -196,10 +195,6 @@ def render_sidebar(tasks, category_options):
         st.query_params["category"] = selected_category
         st.experimental_rerun()
 
-    st.sidebar.caption("Use the header arrows to move between tasks.")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Scores are saved to scores/scores.db")
-    st.sidebar.caption("Leaderboard available via the Pages menu.")
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     return selected_category, selected_task_id, filtered_task_ids
@@ -289,6 +284,7 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
                 )
                 st.markdown(wrapped, unsafe_allow_html=True)
 
+    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
     # Scoring sliders under cards (aligned heights)
     cols_per_row = 2 if len(model_names) > 1 else 1
     for start in range(0, len(model_names), cols_per_row):
@@ -297,20 +293,25 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
         for idx_in_row, model in enumerate(row_models):
             idx = start + idx_in_row
             with cols[idx_in_row]:
-                q_key = f"{task_id}_q_{model}"
-                st.slider(
-                    f"Quality ({'Model ' + chr(65+idx) if not st.session_state[reveal_key] else model})",
-                    1,
-                    5,
-                    st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
-                    key=q_key,
-                )
+                sub_left, sub_mid, sub_right = st.columns([0.1, 0.8, 0.1])
+                with sub_mid:
+                    q_key = f"{task_id}_q_{model}"
+                    st.slider(
+                        f"Quality ({'Model ' + chr(65+idx) if not st.session_state[reveal_key] else model})",
+                        1,
+                        5,
+                        st.session_state.get(q_key, saved_scores.get(model, {}).get("quality", 3)),
+                        key=q_key,
+                    )
 
-    col_save, col_reveal = st.columns([1,1])
-    with col_save:
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+    spacer_left, center_col, spacer_right = st.columns([2, 3, 2])
+    with center_col:
         if st.button("💾 Save scores", type="primary", use_container_width=True):
             save_clicked = True
-    with col_reveal:
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+    spacer_left2, center_col2, spacer_right2 = st.columns([2, 3, 2])
+    with center_col2:
         all_scored = all(m in saved_scores for m in model_names)
         reveal_disabled = not all_scored
         if st.button("Reveal Model Names", disabled=reveal_disabled, use_container_width=True):
@@ -324,108 +325,18 @@ def render_model_responses(task_id, model_names, responses, saved_scores):
                 "quality": int(st.session_state.get(q_key, 3)),
             }
         save_scores_for_task(task_id, score_payload)
-        st.success(f"Saved scores for {task_id}")
-        saved_scores = load_scores_for_task(task_id)
-        st.session_state[reveal_key] = False
+        st.rerun()
 
     return saved_scores
 
 # --------------------------------------------
 # CUSTOM MODERN CSS
 # --------------------------------------------
+STYLES_PATH = Path(__file__).parent / "styles.css"
+
 def inject_css():
-    st.markdown("""
-<style>
-    .page-shell { padding-top: 4px; }
-    .page-title { margin: 4px 0 4px 0; }
-    .section-heading { margin: 12px 0 8px 0; }
-
-    .top-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 0 4px 0;
-        flex-wrap: wrap;
-    }
-
-    .pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-    }
-    .pill-muted { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); }
-    .pill-strong { background: linear-gradient(120deg, #6E8EF5, #9B6BFF); color: #fff; }
-    .pill-soft { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.75); }
-
-    .prompt-card, .model-card {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px;
-        padding: 16px 18px;
-    }
-    .prompt-card {
-        border-left: 4px solid #4F8BFF;
-        background: rgba(79,139,255,0.08);
-    }
-    .model-card { height: 100%; min-height: 320px; display: flex; flex-direction: column; gap: 8px; }
-
-    .card-label {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        color: rgba(255,255,255,0.7);
-        padding-bottom: 6px;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .response-box {
-        background: transparent;
-        border: none;
-        padding: 4px 0;
-        color: rgba(255,255,255,0.92);
-        flex: 0 0 auto;
-        min-height: 180px;
-        max-height: 400px;
-        overflow: auto;
-    }
-    .response-box p { margin: 0.25rem 0; }
-    .response-box ol, .response-box ul { margin: 0.25rem 0; padding-left: 1.2rem; }
-
-    .hidden-chip {
-        background: rgba(255,255,255,0.12);
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 12px;
-        color: rgba(255,255,255,0.85);
-        display: inline-block;
-        margin-bottom: 6px;
-    }
-
-    .reveal-chip {
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 12px;
-        color: white;
-        display: inline-block;
-        margin-bottom: 6px;
-    }
-
-    /* Sidebar tighter + smaller font */
-    [data-testid="stSidebar"] {
-        min-width: 220px;
-        max-width: 240px;
-    }
-    [data-testid="stSidebar"] * {
-        font-size: 14px;
-    }
-</style>
-    """, unsafe_allow_html=True)
+    css = STYLES_PATH.read_text(encoding="utf-8")
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 # --------------------------------------------
 # COLOR MAPPING FOR MODELS
@@ -470,7 +381,9 @@ def main():
     completed_tasks, total_tasks = task_completion_counts(task_ids, expected_models or 1)
 
     render_topbar(task, scored_models, expected_models, completed_tasks, total_tasks, filtered_task_ids, selected_category)
-    render_prompt(task)
+    spacer_left, prompt_col, spacer_right = st.columns([0.15, 0.7, 0.15])
+    with prompt_col:
+        render_prompt(task)
     render_model_responses(selected_task_id, model_names, responses, saved_scores)
 
 
